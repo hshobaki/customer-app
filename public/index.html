@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Customer CRUD</title>
+  <style>
+    :root{--bg:#f6f8fa;--card:#ffffff;--primary:#2563eb;--accent:#10b981;--danger:#ef4444;--muted:#6b7280}
+    *{box-sizing:border-box}
+    body{font-family:Inter,system-ui,Arial,Helvetica,sans-serif;background:linear-gradient(180deg,#f8fafc, #eef2ff);margin:0;padding:32px;min-height:100vh}
+    .wrap{max-width:900px;margin:0 auto}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{margin:0;font-size:20px;color:#0f172a}
+    .card{background:var(--card);padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(15,23,42,0.06)}
+    form{display:flex;gap:10px;flex-wrap:wrap}
+    form input{flex:1 1 200px;padding:10px;border-radius:8px;border:1px solid #e6e9ef}
+    form .actions{display:flex;gap:8px}
+    button{background:var(--primary);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+    button.secondary{background:transparent;color:var(--muted);border:1px solid #e6e9ef}
+    table{width:100%;border-collapse:collapse;margin-top:14px}
+    thead th{text-align:left;padding:10px;color:var(--muted);font-size:13px}
+    tbody td{padding:10px;border-top:1px solid #f1f5f9;background:linear-gradient(#fff,#fff)}
+    .btn-sm{padding:6px 8px;border-radius:8px;font-size:13px}
+    .edit{background:#f3f4f6;color:#111;border:1px solid #e6e9ef}
+    .del{background:transparent;color:var(--danger);border:1px solid rgba(239,68,68,0.12)}
+    .flash{animation:flash 1s ease}
+    @keyframes flash{0%{background:rgba(16,185,129,0.15)}50%{background:rgba(16,185,129,0.05)}100%{background:transparent}}
+    .fade-out{animation:fadeOut 400ms ease forwards}
+    @keyframes fadeOut{to{opacity:0;transform:translateX(-10px);height:0;margin:0;padding:0}}
+    .toast{position:fixed;right:20px;bottom:20px;background:#111;color:#fff;padding:10px 14px;border-radius:8px;box-shadow:0 8px 24px rgba(2,6,23,0.2);opacity:0;transform:translateY(10px);transition:all .25s}
+    .toast.show{opacity:1;transform:none}
+    .controls{display:flex;gap:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Customer CRUD</h1>
+      <div class="controls"><small style="color:var(--muted)">Nice UI with sounds</small></div>
+    </header>
+
+    <div class="card">
+      <form id="customer-form">
+        <input type="hidden" id="cid">
+        <input id="name" placeholder="Name" required autocomplete="off">
+        <input id="email" placeholder="Email" autocomplete="off">
+        <input id="phone" placeholder="Phone" autocomplete="off">
+        <div class="actions">
+          <button type="submit">Save</button>
+          <button type="button" id="cancel" class="secondary">Cancel</button>
+        </div>
+      </form>
+
+      <table id="list" aria-live="polite">
+        <thead><tr><th style="width:48px">ID</th><th>Name</th><th>Email</th><th>Phone</th><th style="width:160px">Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-atomic="true"></div>
+
+  <script>
+    const api = '/api/customers';
+    const tbody = document.querySelector('#list tbody');
+    const form = document.getElementById('customer-form');
+    const cid = document.getElementById('cid');
+    const toast = document.getElementById('toast');
+
+    // WebAudio simple beeps
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playSound(type){
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.connect(g); g.connect(audioCtx.destination);
+      if (type === 'save'){ o.frequency.value = 880; g.gain.value = 0.05 }
+      else if (type === 'delete'){ o.frequency.value = 220; g.gain.value = 0.08 }
+      else { o.frequency.value = 440; g.gain.value = 0.04 }
+      o.type = 'sine';
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.25);
+      o.stop(audioCtx.currentTime + 0.26);
+    }
+
+    function showToast(msg){
+      toast.textContent = msg; toast.classList.add('show');
+      setTimeout(()=>toast.classList.remove('show'), 2200);
+    }
+
+    async function load(){
+      const res = await fetch(api);
+      const rows = await res.json();
+      tbody.innerHTML = rows.map(r=>rowHtml(r)).join('');
+    }
+
+    function rowHtml(r){
+      return `<tr data-id="${r.id}"><td>${r.id}</td><td>${escapeHtml(r.name)}</td><td>${escapeHtml(r.email||'')}</td><td>${escapeHtml(r.phone||'')}</td><td><button data-id="${r.id}" class="btn-sm edit">Edit</button> <button data-id="${r.id}" class="btn-sm del">Delete</button></td></tr>`;
+    }
+
+    form.addEventListener('submit', async e=>{
+      e.preventDefault();
+      const payload = { name: document.getElementById('name').value.trim(), email: document.getElementById('email').value.trim(), phone: document.getElementById('phone').value.trim() };
+      try{
+        let res;
+        if (cid.value){
+          res = await fetch(api+'/'+cid.value, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+        } else {
+          res = await fetch(api, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+        }
+        if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+        const updated = await res.json();
+        await refreshAndHighlight(updated.id, 'save');
+        playSound('save');
+        showToast(cid.value ? 'Updated' : 'Created');
+        reset();
+      }catch(err){ showToast('Error: '+err.message); }
+    });
+
+    document.getElementById('cancel').addEventListener('click', e=>reset());
+
+    tbody.addEventListener('click', async e=>{
+      const id = e.target.dataset.id;
+      if (!id) return;
+      if (e.target.classList.contains('del')){
+        if (!confirm('Delete this customer?')) return;
+        const res = await fetch(api+'/'+id, { method:'DELETE' });
+        if (!res.ok){ showToast('Delete failed'); return; }
+        const tr = tbody.querySelector(`tr[data-id="${id}"]`);
+        if (tr){ tr.classList.add('fade-out'); setTimeout(()=>{ tr.remove(); }, 380); }
+        playSound('delete');
+        showToast('Deleted');
+        return;
+      }
+      if (e.target.classList.contains('edit')){
+        // If server doesn't support single GET, fetch list and pick
+        const list = await (await fetch(api)).json();
+        const item = list.find(x=>x.id==id);
+        populate(item);
+      }
+    });
+
+    async function refreshAndHighlight(id, type){
+      // reload list and flash the updated/created row
+      await load();
+      const tr = tbody.querySelector(`tr[data-id="${id}"]`);
+      if (tr){ tr.classList.add('flash'); setTimeout(()=>tr.classList.remove('flash'), 1000); }
+    }
+
+    function populate(item){
+      if (!item) return;
+      cid.value = item.id;
+      document.getElementById('name').value = item.name || '';
+      document.getElementById('email').value = item.email || '';
+      document.getElementById('phone').value = item.phone || '';
+      window.scrollTo({top:0,behavior:'smooth'});
+    }
+
+    function reset(){ cid.value=''; form.reset(); }
+
+    function escapeHtml(s){ return (s+'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"})[c]); }
+
+    // initial load
+    load();
+  </script>
+</body>
+</html>
